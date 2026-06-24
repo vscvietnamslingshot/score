@@ -52,6 +52,9 @@ interface SettingsPanelProps {
   onUpdateSubAdmins?: (subList: string[]) => void;
   isNewTournamentModalOpen?: boolean;
   setIsNewTournamentModalOpen?: (open: boolean) => void;
+  setInputAthletes?: (athletes: Athlete[]) => void;
+  setTeamInputAthletes?: (athletes: Athlete[]) => void;
+  setClubs?: React.Dispatch<React.SetStateAction<any[]>>;
 }
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({
@@ -78,6 +81,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   setStartDate,
   endDate,
   setEndDate,
+  setClubs,
   teamDistances,
   setTeamDistances,
   teamShotsCount,
@@ -98,6 +102,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onUpdateSubAdmins,
   isNewTournamentModalOpen: externalIsNewTournamentModalOpen,
   setIsNewTournamentModalOpen: externalSetIsNewTournamentModalOpen,
+  setInputAthletes,
+  setTeamInputAthletes,
 }) => {
   const [tempMatchName, setTempMatchName] = useState(matchName);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -133,7 +139,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   const [editingEliminationValue, setEditingEliminationValue] = useState(50);
   const [editingIsSolo, setEditingIsSolo] = useState(false);
 
-  const [sessionSaveName, setSessionSaveName] = useState("");
   const [importText, setImportText] = useState("");
   const [importError, setImportError] = useState("");
   const [importSuccess, setImportSuccess] = useState(false);
@@ -907,31 +912,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
           {importSuccess && (
             <span className="text-[10px] text-emerald-700 font-black block bg-emerald-50 p-2 rounded border border-emerald-200 text-center animate-fadeIn">✓ Đã phục hồi dữ liệu hoàn chỉnh!</span>
           )}
-
-          {/* Archive Current Session to History Log */}
-          <div className="flex gap-2 pt-2 flex-col">
-            <span className="text-[11px] font-black text-gray-400 uppercase tracking-widest block">
-              Ghi Lịch Sử Giải Hiện Tại
-            </span>
-            <div className="flex gap-1.5">
-              <input
-                type="text"
-                placeholder="e.g. Vòng Sơ Loại..."
-                value={sessionSaveName}
-                onChange={(e) => setSessionSaveName(e.target.value)}
-                className="flex-1 px-2.5 py-1.5 text-xs bg-gray-55 dark:bg-slate-800 border dark:border-slate-750 border-gray-300 rounded focus:outline-none"
-              />
-              <button
-                onClick={() => {
-                  onSaveCurrentSessionToHistory(sessionSaveName);
-                  setSessionSaveName("");
-                }}
-                className="px-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold rounded cursor-pointer whitespace-nowrap"
-              >
-                Ghi Lại
-              </button>
-            </div>
-          </div>
 
           {/* CLOUD REFEREE MANAGER */}
           {activeHistoryId?.startsWith("tour-") ? (
@@ -1858,7 +1838,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
           <div className="flex flex-col sm:flex-row gap-3">
             <a
-              href="/app-source.zip"
+              href="./app-source.zip"
               download="VSC_Slingshot_Score_App_Source.zip"
               className="flex-1 py-1.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-xl flex items-center justify-center gap-2 transition-all shadow-md hover:shadow-indigo-500/25 active:scale-98 cursor-pointer text-center text-xs uppercase"
             >
@@ -2112,19 +2092,20 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                         athletes: [],
                         teamAthletes: [],
                         inputAthletes: [],
-                        teamInputAthletes: []
+                        teamInputAthletes: [],
+                        masterAthletes: []
                       }
                     );
 
                     // 1. Save current session to history if there's any active data (preserving 100% logic)
-                    if (athletes.length > 0 || masterAthletes.length > 0) {
+                    if (matchName && matchName.trim() && (athletes.length > 0 || masterAthletes.length > 0)) {
                       onSaveCurrentSessionToHistory(matchName);
                     }
                     const athletesToSave = masterAthletes.length > 0 ? masterAthletes : athletes;
-                    if (athletesToSave.length > 0) {
+                    if (matchName && matchName.trim() && athletesToSave.length > 0) {
                       const newSavedList: StoredAthleteList = {
                         id: `list-${Date.now()}`,
-                        name: matchName,
+                        name: matchName.trim(),
                         createdAt: new Date().toISOString(),
                         athletes: JSON.parse(JSON.stringify(athletesToSave)),
                       };
@@ -2139,8 +2120,14 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     setAthletes([]);
                     setTeamAthletes([]);
                     setMasterAthletes([]);
+                    setInputAthletes?.([]);
+                    setTeamInputAthletes?.([]);
+                    setClubs?.([]);
                     setStartDate(modalStartDate);
                     setEndDate(modalEndDate);
+
+                    // Track creation time of new tournament to delay roster auto-save
+                    localStorage.setItem("slingshot_new_tournament_created_at", Date.now().toString());
 
                     // Set active history ID to the newly created Cloud tournament
                     setActiveHistoryId(newTourId);

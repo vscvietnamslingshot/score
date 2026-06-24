@@ -23,7 +23,8 @@ import {
   query,
   where,
   orderBy,
-  serverTimestamp
+  serverTimestamp,
+  enableIndexedDbPersistence
 } from "firebase/firestore";
 
 import firebaseConfig from "../firebase-applet-config.json";
@@ -39,6 +40,19 @@ export const googleProvider = new GoogleAuthProvider();
 export const db = initializeFirestore(app, {
   experimentalForceLongPolling: true,
 }, firebaseConfig.firestoreDatabaseId);
+
+// Enable Offline Persistence for robust network-resilient scoring
+enableIndexedDbPersistence(db).catch((err) => {
+  if (err.code === "failed-precondition") {
+    // Multiple tabs open, persistence can only be enabled in one tab at a time.
+    console.warn("Firestore offline persistence failed-precondition: Multiple tabs open.");
+  } else if (err.code === "unimplemented") {
+    // The current browser does not support all of the features required to enable persistence.
+    console.warn("Firestore offline persistence unimplemented: Browser not supported.");
+  } else {
+    console.warn("Firestore offline persistence could not be enabled:", err);
+  }
+});
 
 export {
   signInWithPopup,

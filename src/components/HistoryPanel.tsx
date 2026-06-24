@@ -1,7 +1,7 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { MatchHistoryItem } from "../types";
-import { Calendar, Trash2, RotateCcw, Award, FileSpreadsheet, Trophy, Users, FileDown, FileUp } from "lucide-react";
+import { Calendar, Trash2, RotateCcw, Award, FileSpreadsheet, Trophy, Users, FileDown, FileUp, Database, Clock, ShieldAlert, HardDriveDownload } from "lucide-react";
 import { getHitCount } from "../utils/qualification";
 
 interface HistoryPanelProps {
@@ -11,6 +11,13 @@ interface HistoryPanelProps {
   currentMasterCount?: number;
   onExportBackup: () => void;
   onImportBackup: (data: string) => boolean;
+  userRole?: string;
+  onRestoreDeviceBackup?: (backupId: string) => boolean;
+  onDeleteDeviceBackup?: (backupId: string) => boolean;
+  matchName?: string;
+  onSaveCurrentSessionToHistory?: (customName?: string) => void;
+  startDate?: string;
+  endDate?: string;
 }
 
 export const HistoryPanel: React.FC<HistoryPanelProps> = ({
@@ -20,75 +27,80 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
   currentMasterCount = 0,
   onExportBackup,
   onImportBackup,
+  userRole = "spectator",
+  onRestoreDeviceBackup,
+  onDeleteDeviceBackup,
+  matchName = "",
+  onSaveCurrentSessionToHistory,
+  startDate = "",
+  endDate = "",
 }) => {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [confirmRestoreId, setConfirmRestoreId] = useState<string | null>(null);
   const [importError, setImportError] = useState("");
   const [importSuccess, setImportSuccess] = useState(false);
+  const [sessionSaveName, setSessionSaveName] = useState("");
   
   const fileInputRefFull = useRef<HTMLInputElement>(null);
   const fileInputRefRestore = useRef<HTMLInputElement>(null);
 
-  if (history.length === 0) {
-    return (
-      <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 p-8 rounded-2xl shadow-sm text-center flex flex-col gap-5 items-center justify-center">
-        <div>
-          <Calendar className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-          <h3 className="text-base font-bold text-gray-700 dark:text-gray-200">Chưa có lịch sử lưu trữ</h3>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 max-w-sm mx-auto">
-            Điểm số hiện tại của bạn sẽ được tự động lưu vào trình duyệt. Để lưu trữ vĩnh viễn các trận đấu cũ, hãy nhấn nút &quot;Lưu lại&quot; ở phần Cấu hình.
-          </p>
-        </div>
-        
-        <div className="border-t dark:border-slate-800 pt-4 w-full max-w-xs flex flex-col gap-2">
-          <button
-            type="button"
-            onClick={() => fileInputRefFull.current?.click()}
-            className="py-2.5 px-4 text-xs bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 dark:bg-indigo-950/20 dark:text-indigo-400 dark:border-indigo-900/50 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer text-center shadow-sm w-full"
-          >
-            <FileUp className="w-4 h-4" /> Khôi phục toàn bộ giải từ File (.json)
-          </button>
-          <input
-            ref={fileInputRefFull}
-            type="file"
-            accept=".json"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (!file) return;
-              setImportError("");
-              setImportSuccess(false);
+  const [deviceBackups, setDeviceBackups] = useState<{ id: string; timestamp: number; matchName: string; isTimeline: boolean }[]>([]);
 
-              const reader = new FileReader();
-              reader.onload = (event) => {
-                try {
-                  const text = event.target?.result as string;
-                  const success = onImportBackup(text);
-                  if (success) {
-                    setImportSuccess(true);
-                    setTimeout(() => setImportSuccess(false), 4500);
-                  } else {
-                    setImportError("Định dạng file backup .json không hợp lệ!");
-                  }
-                } catch (err) {
-                  setImportError("Lỗi đọc file backup!");
-                }
-              };
-              reader.readAsText(file);
-              e.target.value = "";
-            }}
-            className="hidden"
-          />
-          
-          {importError && (
-            <span className="text-[11px] text-red-600 font-bold block bg-red-50 p-2 rounded border border-red-200 animate-fadeIn text-center">{importError}</span>
-          )}
-          {importSuccess && (
-            <span className="text-[11px] text-emerald-700 font-extrabold block bg-emerald-50 p-2 rounded border border-emerald-200 animate-fadeIn text-center">✓ Phục hồi thành công! Hãy chuyển tab xem điểm số.</span>
-          )}
-        </div>
-      </div>
-    );
-  }
+  const getTournamentStatus = (startDateStr?: string, endDateStr?: string): "active" | "upcoming" | "ended" => {
+    if (!startDateStr) return "active";
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    
+    const partsStart = startDateStr.split("-");
+    if (partsStart.length !== 3) return "active";
+    const start = new Date(Number(partsStart[0]), Number(partsStart[1]) - 1, Number(partsStart[2]));
+    
+    if (today < start) {
+      return "upcoming";
+    }
+    
+    if (endDateStr) {
+      const partsEnd = endDateStr.split("-");
+      if (partsEnd.length === 3) {
+        const end = new Date(Number(partsEnd[0]), Number(partsEnd[1]) - 1, Number(partsEnd[2]), 23, 59, 59, 999);
+        if (now > end) {
+          return "ended";
+        }
+      }
+    }
+    return "active";
+  };
+
+  const currentStatus = getTournamentStatus(startDate, endDate);
+
+  const loadDeviceBackups = () => {
+    try {
+      const savedIndex = localStorage.getItem("vsc_device_backups_index");
+      if (savedIndex) {
+        setDeviceBackups(JSON.parse(savedIndex));
+      } else {
+        setDeviceBackups([]);
+      }
+    } catch {
+      setDeviceBackups([]);
+    }
+  };
+
+  useEffect(() => {
+    loadDeviceBackups();
+
+    const handleUpdate = () => {
+      loadDeviceBackups();
+    };
+
+    window.addEventListener("vsc_backups_updated", handleUpdate);
+    return () => {
+      window.removeEventListener("vsc_backups_updated", handleUpdate);
+    };
+  }, []);
+
+
+  const [deviceBackupRestoreId, setDeviceBackupRestoreId] = useState<string | null>(null);
 
   // Format date readable
   const formatDate = (isoString: string) => {
@@ -106,8 +118,18 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
     }
   };
 
+  const formatTimeAgo = (ts: number) => {
+    const diff = Date.now() - ts;
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return "Vừa mới đây";
+    if (mins < 60) return `${mins} phút trước`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours} giờ trước`;
+    return formatDate(new Date(ts).toISOString());
+  };
+
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-6">
       
       {/* Premium History-Specific Backup & Sync Bar */}
       <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 p-4 rounded-2xl shadow-sm flex flex-col md:flex-row justify-between items-center gap-4">
@@ -176,144 +198,318 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({
         <span className="text-[11px] text-emerald-700 font-extrabold block bg-emerald-50 p-3 rounded-xl border border-emerald-250 text-center animate-fadeIn animate-pulse">✓ Đã phục hồi toàn bộ dữ liệu lịch sử thành công!</span>
       )}
 
-      {/* Grid of tournament archives */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {history.map((item) => {
-          // Calculate champion
-          let championName = "Chưa có";
-          let championTeam = "";
-          let maxScore = -1;
+      {/* MANUAL HISTORY SAVE CARD */}
+      {(userRole === "admin" || userRole === "subAdmin") && onSaveCurrentSessionToHistory && (
+        <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 p-4.5 rounded-2xl shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div className="text-left">
+            <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2">
+              <Award className="w-4.5 h-4.5 text-emerald-600 animate-pulse" />
+              Ghi Lịch Sử Giải Hiện Tại (Manual Backup)
+            </h3>
+            <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1 max-w-xl">
+              Lưu trữ thủ công toàn bộ trạng thái điểm số hiện tại của giải đấu vào kho lịch sử thiết bị hiện tại.
+            </p>
+          </div>
 
-          item.athletes.forEach((athlete) => {
-            let athleteScore = 0;
-            item.distances.forEach((dist) => {
-              const hits = athlete.scores[dist.id] || [];
-              athleteScore += getHitCount(hits) * dist.multiplier;
-            });
-
-            if (athleteScore > maxScore) {
-              maxScore = athleteScore;
-              championName = athlete.name;
-              championTeam = athlete.team;
-            }
-          });
-
-          return (
-            <div 
-              key={item.id} 
-              className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 shadow-sm hover:shadow-md transition-shadow flex flex-col gap-3 relative"
+          <div className="flex gap-2 w-full sm:w-auto items-center shrink-0">
+            <input
+              type="text"
+              placeholder={matchName || "e.g. Vòng Sơ Loại..."}
+              value={sessionSaveName}
+              onChange={(e) => setSessionSaveName(e.target.value)}
+              className="px-3 py-2 text-xs bg-slate-50 dark:bg-slate-950 border dark:border-slate-800 border-gray-300 rounded-xl focus:outline-none w-full sm:w-56 font-bold text-slate-800 dark:text-slate-100"
+            />
+            <button
+              onClick={() => {
+                onSaveCurrentSessionToHistory(sessionSaveName || matchName);
+                setSessionSaveName("");
+              }}
+              className="py-2 px-4 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl cursor-pointer whitespace-nowrap transition-colors shadow-sm"
             >
-              {/* Header info */}
+              Ghi Lại Giải
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ADMIN & SUB-ADMIN AUTO-BACKUP HỘP ĐEN DASHBOARD */}
+      {(userRole === "admin" || userRole === "subAdmin") && currentStatus === "active" && (
+        <div className="bg-slate-900 border border-slate-800 text-white p-5 rounded-2xl shadow-lg relative overflow-hidden">
+          {/* Subtle decoration */}
+          <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none" />
+          <div className="absolute bottom-0 left-0 w-24 h-24 bg-rose-500/5 rounded-full blur-xl pointer-events-none" />
+
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 border-b border-slate-800 pb-3 mb-4">
+            <div className="flex items-center gap-2.5">
+              <div className="bg-indigo-500/10 p-2 rounded-xl text-indigo-400 border border-indigo-500/20 shrink-0">
+                <Database className="w-5 h-5 animate-pulse" />
+              </div>
               <div>
-                <div className="flex justify-between items-start">
-                  <span className="text-[10px] font-semibold text-blue-600 bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded flex items-center gap-1">
-                    <Calendar className="w-3 h-3" /> {formatDate(item.date)}
+                <h3 className="text-sm sm:text-base font-black text-white uppercase tracking-wider flex items-center gap-2">
+                  HỘP ĐEN SAO LƯU NỘI BỘ (DEVICE BACKUPS)
+                  <span className="bg-rose-500 text-white text-[9px] font-black tracking-widest px-1.5 py-0.5 rounded-full uppercase shrink-0 animate-pulse">
+                    ADMIN & SUB-ADMIN
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setConfirmDeleteId(item.id);
-                    }}
-                    className="p-1.5 bg-rose-50 dark:bg-rose-950/20 text-rose-500 hover:text-white hover:bg-rose-600 rounded-lg transition-all cursor-pointer shadow-sm active:scale-95"
-                    title="Xóa bản ghi lịch sử"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-                <h4 className="text-base font-bold text-gray-900 mt-2 line-clamp-1">
-                  {item.matchName}
-                </h4>
-              </div>
-
-              {/* Quick specifications breakdown */}
-              <div className="grid grid-cols-3 gap-2 py-2 border-y border-gray-100 text-xs">
-                <div className="text-center">
-                  <span className="text-[10px] text-gray-400 block mb-0.5 uppercase font-semibold">Cự ly</span>
-                  <span className="font-semibold text-gray-700">{item.distances.length} dòng</span>
-                </div>
-                <div className="text-center border-x border-gray-100">
-                  <span className="text-[10px] text-gray-400 block mb-0.5 uppercase font-semibold">Số lượt bắn</span>
-                  <span className="font-semibold text-gray-700 font-mono">{item.shotCount} phát</span>
-                </div>
-                <div className="text-center">
-                  <span className="text-[10px] text-gray-400 block mb-0.5 uppercase font-semibold">VĐV (Thi/ĐK)</span>
-                  <span className="font-semibold text-gray-700 font-mono flex items-center justify-center gap-0.5" title="Số vận động viên trong bảng Ghi Điểm / Số vận động viên đăng ký trong giải đấu">
-                    <Users className="w-3.5 h-3.5 text-gray-400" /> {item.athletes.length}/{item.masterCount || item.athletes.length}
-                  </span>
-                </div>
-              </div>
-
-              {/* Champion showcase */}
-              {maxScore >= 0 && (
-                <div className="bg-amber-50/50 border border-amber-100/50 rounded-lg p-2.5 flex items-center gap-2.5">
-                  <div className="bg-amber-100 p-1.5 rounded-full text-amber-600">
-                    <Trophy className="w-4 h-4" />
-                  </div>
-                  <div className="text-xs">
-                    <span className="text-[10px] text-amber-800 font-bold uppercase tracking-wide block">Nhà Vô Địch (Đầu bảng)</span>
-                    <span className="font-bold text-gray-800">{championName}</span>{" "}
-                    {championTeam && (
-                      <span className="text-gray-500 font-medium">({championTeam})</span>
-                    )}
-                    <span className="text-amber-700 font-mono font-bold block">
-                      {maxScore} điểm
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {/* List distances tags */}
-              <div className="flex flex-wrap gap-1 mt-1">
-                {item.distances.map((dist) => (
-                  <span key={dist.id} className="text-[10px] bg-slate-50 border border-slate-200 text-slate-500 px-1.5 py-0.5 rounded font-mono">
-                    {dist.distance} (x{dist.multiplier})
-                  </span>
-                ))}
-              </div>
-
-              {/* Restore and detail buttons */}
-              <div className="mt-auto pt-2 flex gap-2">
-                {confirmRestoreId === item.id ? (
-                  <div className="w-full bg-amber-50 dark:bg-amber-955 border border-amber-250 dark:border-amber-900/50 p-2 rounded-xl flex flex-col gap-1.5 text-xs text-amber-900 animate-fadeIn font-extrabold justify-center items-center">
-                    <span className="uppercase text-[9px] text-amber-805 dark:text-amber-400 block text-center tracking-wide">
-                      ⚠️ Ghi đè điểm hiện tại?
-                    </span>
-                    <div className="flex gap-1.5 w-full">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          onRestoreHistoryItem(item.id);
-                          setConfirmRestoreId(null);
-                        }}
-                        className="flex-1 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded font-black text-[10.5px] cursor-pointer"
-                      >
-                        Có, đổi bảng
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setConfirmRestoreId(null)}
-                        className="py-1 px-3 bg-gray-200 hover:bg-gray-300 text-slate-755 rounded font-bold text-[10.5px] cursor-pointer"
-                      >
-                        Hủy
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setConfirmRestoreId(item.id);
-                    }}
-                    className="w-full py-1.5 bg-blue-100 hover:bg-blue-200 text-blue-700 dark:bg-blue-950/30 dark:text-blue-400 rounded text-xs font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5" /> Khôi phục bảng điểm này
-                  </button>
-                )}
+                </h3>
+                <p className="text-[10px] text-slate-400 mt-0.5">
+                  Tự động lưu trạng thái xuống thiết bị của Ban Tổ Chức (Ghi đè mỗi 5 phút, tạo dòng thời gian mỗi 15 phút - lưu 5 bản gần nhất).
+                </p>
               </div>
             </div>
-          );
-        })}
+          </div>
+
+          {deviceBackups.length === 0 ? (
+            <div className="bg-slate-950/40 p-5 rounded-xl border border-slate-800 text-center text-xs text-slate-400 font-medium">
+              <Clock className="w-8 h-8 text-slate-600 mx-auto mb-2 animate-spin" />
+              Chưa ghi nhận bản sao lưu tự động nào từ phiên chấm điểm hiện tại của Admin.<br />
+              <span className="text-[10px] text-slate-500">Tiến trình tự động quét định kỳ sẽ ghi đè và kích hoạt sau 5 phút làm việc.</span>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+              {deviceBackups.map((b) => (
+                <div 
+                  key={b.id} 
+                  className={`bg-slate-950/50 p-3.5 rounded-xl border ${
+                    b.isTimeline 
+                      ? "border-cyan-500/10 bg-gradient-to-br from-cyan-950/10 to-slate-950" 
+                      : "border-amber-500/10 bg-gradient-to-br from-amber-950/10 to-slate-950"
+                  } flex flex-col justify-between gap-3 text-xs`}
+                >
+                  <div className="flex justify-between items-start gap-2">
+                    <div>
+                      <span className={`inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full mb-1.5 ${
+                        b.isTimeline 
+                          ? "bg-cyan-500/10 text-cyan-400 border border-cyan-500/20" 
+                          : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                      }`}>
+                        <Clock className="w-3 h-3" />
+                        {b.isTimeline ? "15 Phút (Dòng thời gian)" : "5 Phút (Ghi đè liên tục)"}
+                      </span>
+                      <h4 className="text-sm font-black text-slate-100 line-clamp-1">
+                        {b.matchName}
+                      </h4>
+                      <p className="text-[10px] text-slate-450 mt-0.5 font-mono">
+                        Đã lưu: {formatTimeAgo(b.timestamp)} ({formatDate(new Date(b.timestamp).toISOString())})
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2 border-t border-slate-800/80 pt-2.5 mt-1">
+                    {deviceBackupRestoreId === b.id ? (
+                      <div className="w-full bg-amber-950/30 border border-amber-500/30 p-2 rounded-lg flex flex-col gap-1.5 text-[11px] text-amber-300 animate-fadeIn font-extrabold items-center">
+                        <span className="uppercase text-[9px] text-amber-400 tracking-wider flex items-center gap-1.5 text-center">
+                          <ShieldAlert className="w-4 h-4 shrink-0 text-amber-500 animate-pulse" />
+                          Ghi đè giải hiện tại trên thiết bị?
+                        </span>
+                        <div className="flex gap-2 w-full">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onRestoreDeviceBackup?.(b.id);
+                              setDeviceBackupRestoreId(null);
+                            }}
+                            className="flex-1 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded font-black cursor-pointer text-xs"
+                          >
+                            Xác nhận nạp
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDeviceBackupRestoreId(null)}
+                            className="py-1 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-medium cursor-pointer text-xs"
+                          >
+                            Hủy
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setDeviceBackupRestoreId(b.id)}
+                          className="flex-1 py-1 px-3 bg-slate-800 hover:bg-indigo-600 hover:text-white text-slate-300 rounded-lg font-black transition-colors flex items-center justify-center gap-1 cursor-pointer text-[11px]"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" /> Khôi phục giải
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (confirm(`Bạn chắc chắn muốn xóa bản sao lưu nội bộ ngày ${formatDate(new Date(b.timestamp).toISOString())}?`)) {
+                              onDeleteDeviceBackup?.(b.id);
+                            }
+                          }}
+                          className="py-1 px-2 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-all cursor-pointer border border-transparent hover:border-rose-500/20"
+                          title="Xóa bản sao lưu"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* RECORD ARCHIVES HEADER */}
+      <div className="border-b dark:border-slate-800 pb-2 mt-2">
+        <h3 className="text-base font-black text-slate-850 dark:text-slate-150 uppercase tracking-wider flex items-center gap-2 font-sans">
+          <Calendar className="w-4.5 h-4.5 text-blue-600" />
+          Hồ Sơ Lịch Sử Các Trận Đấu (Tournament Records)
+        </h3>
+        <p className="text-[11px] text-gray-500 mt-0.5">
+          Danh sách các giải đấu được lưu trữ thủ công trong phiên hoạt động hiện tại.
+        </p>
       </div>
+
+      {history.length === 0 ? (
+        <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 p-8 rounded-2xl shadow-sm text-center flex flex-col gap-3 items-center justify-center">
+          <Calendar className="w-12 h-12 text-gray-300 mx-auto mb-1" />
+          <h3 className="text-base font-bold text-gray-700 dark:text-gray-200">Chưa có lịch sử lưu trữ</h3>
+          <p className="text-xs text-gray-500 dark:text-gray-450 max-w-sm mx-auto leading-relaxed">
+            Điểm số hiện tại của bạn sẽ được tự động lưu vào bộ nhớ trình duyệt. Để chuyển hẳn một giải cũ vào kho lưu trữ vĩnh viễn, hãy nhấn nút &quot;Lưu lại giải&quot; ở phần Cấu hình giải đấu.
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {history.map((item) => {
+            // Calculate champion
+            let championName = "Chưa có";
+            let championTeam = "";
+            let maxScore = -1;
+
+            item.athletes.forEach((athlete) => {
+              let athleteScore = 0;
+              item.distances.forEach((dist) => {
+                const hits = athlete.scores[dist.id] || [];
+                athleteScore += getHitCount(hits) * dist.multiplier;
+              });
+
+              if (athleteScore > maxScore) {
+                maxScore = athleteScore;
+                championName = athlete.name;
+                championTeam = athlete.team;
+              }
+            });
+
+            return (
+              <div 
+                key={item.id} 
+                className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-2xl p-4 shadow-sm hover:shadow-md transition-shadow flex flex-col gap-3 relative animate-fadeIn"
+              >
+                {/* Header info */}
+                <div>
+                  <div className="flex justify-between items-start">
+                    <span className="text-[10px] font-semibold text-blue-600 bg-blue-50 dark:bg-blue-900/30 px-2 py-0.5 rounded flex items-center gap-1">
+                      <Calendar className="w-3 h-3" /> {formatDate(item.date)}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setConfirmDeleteId(item.id);
+                      }}
+                      className="p-1.5 bg-rose-50 dark:bg-rose-955/20 text-rose-500 hover:text-white hover:bg-rose-600 rounded-lg transition-all cursor-pointer shadow-sm active:scale-95"
+                      title="Xóa bản ghi lịch sử"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <h4 className="text-base font-bold text-gray-900 mt-2 line-clamp-1 dark:text-white">
+                    {item.matchName}
+                  </h4>
+                </div>
+
+                {/* Quick specifications breakdown */}
+                <div className="grid grid-cols-3 gap-2 py-2 border-y border-gray-100 dark:border-slate-800 text-xs">
+                  <div className="text-center">
+                    <span className="text-[10px] text-gray-450 block mb-0.5 uppercase font-semibold">Cự ly</span>
+                    <span className="font-semibold text-gray-700 dark:text-slate-200">{item.distances.length} dòng</span>
+                  </div>
+                  <div className="text-center border-x border-gray-100 dark:border-slate-800">
+                    <span className="text-[10px] text-gray-450 block mb-0.5 uppercase font-semibold">Số lượt bắn</span>
+                    <span className="font-semibold text-gray-700 dark:text-slate-200 font-mono">{item.shotCount} phát</span>
+                  </div>
+                  <div className="text-center">
+                    <span className="text-[10px] text-gray-450 block mb-0.5 uppercase font-semibold">VĐV (Thi/ĐK)</span>
+                    <span className="font-semibold text-gray-700 dark:text-slate-200 font-mono flex items-center justify-center gap-0.5" title="Số vận động viên trong bảng Ghi Điểm / Số vận động viên đăng ký trong giải đấu">
+                      <Users className="w-3.5 h-3.5 text-gray-405" /> {item.athletes.length}/{item.masterCount || item.athletes.length}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Champion showcase */}
+                {maxScore >= 0 && (
+                  <div className="bg-amber-50/50 dark:bg-amber-955/20 border border-amber-100/50 dark:border-amber-900/20 rounded-lg p-2.5 flex items-center gap-2.5">
+                    <div className="bg-amber-100 dark:bg-amber-955 p-1.5 rounded-full text-amber-600 dark:text-amber-400 shrink-0">
+                      <Trophy className="w-4 h-4" />
+                    </div>
+                    <div className="text-xs">
+                      <span className="text-[10px] text-amber-800 dark:text-amber-455 font-bold uppercase tracking-wide block">Nhà Vô Địch (Đầu bảng)</span>
+                      <span className="font-bold text-gray-800 dark:text-slate-100">{championName}</span>{" "}
+                      {championTeam && (
+                        <span className="text-gray-500 dark:text-slate-400 font-medium">({championTeam})</span>
+                      )}
+                      <span className="text-amber-700 dark:text-amber-400 font-mono font-bold block">
+                        {maxScore} điểm
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* List distances tags */}
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {item.distances.map((dist) => (
+                    <span key={dist.id} className="text-[10px] bg-slate-50 dark:bg-slate-950 border border-slate-250 dark:border-slate-800 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded font-mono">
+                      {dist.distance} (x{dist.multiplier})
+                    </span>
+                  ))}
+                </div>
+
+                {/* Restore and detail buttons */}
+                <div className="mt-auto pt-2 flex gap-2">
+                  {confirmRestoreId === item.id ? (
+                    <div className="w-full bg-amber-50 dark:bg-amber-955 border border-amber-250 dark:border-amber-900/50 p-2 rounded-xl flex flex-col gap-1.5 text-xs text-amber-900 dark:text-amber-300 animate-fadeIn font-extrabold justify-center items-center">
+                      <span className="uppercase text-[9px] text-amber-805 dark:text-amber-400 block text-center tracking-wide">
+                        ⚠️ Ghi đè điểm hiện tại?
+                      </span>
+                      <div className="flex gap-1.5 w-full">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onRestoreHistoryItem(item.id);
+                            setConfirmRestoreId(null);
+                          }}
+                          className="flex-1 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded font-black text-[10.5px] cursor-pointer"
+                        >
+                          Có, đổi bảng
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmRestoreId(null)}
+                          className="py-1 px-3 bg-gray-200 dark:bg-slate-800 text-slate-755 dark:text-slate-300 rounded font-bold text-[10.5px] cursor-pointer"
+                        >
+                          Hủy
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setConfirmRestoreId(item.id);
+                      }}
+                      className="w-full py-1.5 bg-blue-100 hover:bg-blue-200 text-blue-700 dark:bg-blue-950/30 dark:text-blue-400 rounded text-xs font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" /> Khôi phục bảng điểm này
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* MATCH RECORD DELETION CONFIRMATION DIALOG */}
       {confirmDeleteId && typeof document !== "undefined" && createPortal(

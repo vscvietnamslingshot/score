@@ -52,6 +52,7 @@ export interface MatchHistoryItem {
   teamDirectMaxShots?: number;
   startDate?: string;
   endDate?: string;
+  isAutoBackup?: boolean;
 }
 
 export interface StoredAthleteList {
@@ -67,5 +68,14 @@ export interface Club {
   avatarUrl?: string; // clb avatar (default empty base64 or URL)
   province?: string; // province of clb (default empty)
 }
+
+export interface DeviceBackupItem {
+  id: string; // "latest" or "timeline-<timestamp>"
+  timestamp: number;
+  matchName: string;
+  isTimeline: boolean;
+  data: string; // Stringified JSON backup containing full active state
+}
+
 
 

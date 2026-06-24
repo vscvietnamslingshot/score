@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
-    "build": "tsx generate-android-assets.js && vite build && npx cap copy",
+    "build": "tsx generate-android-assets.js && tsx zip-project.js && vite build && npx cap copy",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit"

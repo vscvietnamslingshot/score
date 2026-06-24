@@ -180,6 +180,7 @@ export async function createOnlineTournament(
     teamAthletes: Athlete[];
     inputAthletes: Athlete[];
     teamInputAthletes: Athlete[];
+    masterAthletes?: Athlete[];
   }
 ): Promise<string> {
   const newId = `tour-${Date.now()}`;
@@ -256,13 +257,14 @@ export function subscribeToTournamentsList(callback: (tournaments: TournamentDat
 /**
  * Subscribes to a single tournament documents in real-time
  */
-export function subscribeToTournamentDoc(id: string, callback: (tournament: TournamentData | null) => void) {
+export function subscribeToTournamentDoc(id: string, callback: (tournament: TournamentData | null, hasPendingWrites: boolean) => void) {
   const docRef = doc(db, "tournaments", id);
   return onSnapshot(docRef, (docSnap) => {
+    const hasPendingWrites = docSnap.metadata.hasPendingWrites;
     if (docSnap.exists()) {
-      callback(docSnap.data() as TournamentData);
+      callback(docSnap.data() as TournamentData, hasPendingWrites);
     } else {
-      callback(null);
+      callback(null, hasPendingWrites);
     }
   }, (error) => {
     handleFirestoreError(error, OperationType.GET, `tournaments/${id}`);

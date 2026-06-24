@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { 
   Plus, 
@@ -26,7 +26,8 @@ import {
   Lock,
   Unlock,
   Eye,
-  Tv
+  Tv,
+  CloudUpload
 } from "lucide-react";
 import { DistanceConfig, Athlete, MatchHistoryItem, StoredAthleteList, Club } from "./types";
 import { AthleteCard } from "./components/AthleteCard";
@@ -42,7 +43,7 @@ import { VSCLogo, SlingshotIcon } from "./components/VSCLogo";
 
 // Firebase imports
 import { auth } from "./firebase";
-import { subscribeToTournamentDoc, updateOnlineTournament, TournamentData } from "./lib/firebaseService";
+import { subscribeToTournamentDoc, updateOnlineTournament, TournamentData, subscribeToTournamentsList, createOnlineTournament } from "./lib/firebaseService";
 import { AuthModal } from "./components/AuthModal";
 import { OnlineTournamentsPanel } from "./components/OnlineTournamentsPanel";
 import { ControlPanel } from "./components/ControlPanel";
@@ -196,6 +197,155 @@ function deepEqual(a: any, b: any): boolean {
   const strB = b === undefined || b === null ? "" : String(b);
   return strA === strB;
 }
+
+// Sub-component for Publish Draft Modal
+const PublishDraftModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  draftPreviewItem: MatchHistoryItem;
+  onlineTournaments: TournamentData[];
+  onOverwrite: (id: string) => void;
+  onCreateNew: (name: string) => void;
+}> = ({ isOpen, onClose, draftPreviewItem, onlineTournaments, onOverwrite, onCreateNew }) => {
+  const cleanName = draftPreviewItem.matchName.replace(/\s*\([^)]*\)\s*$/, "").trim();
+  const [publishOption, setPublishOption] = React.useState<"overwrite" | "new">(onlineTournaments.length > 0 ? "overwrite" : "new");
+  
+  // Find closest tournament
+  const defaultTourId = React.useMemo(() => {
+    if (onlineTournaments.length === 0) return "";
+    const cleanDraft = cleanName.toLowerCase();
+    const match = onlineTournaments.find(t => t.matchName.toLowerCase().includes(cleanDraft) || cleanDraft.includes(t.matchName.toLowerCase()));
+    return match ? match.id : onlineTournaments[0].id;
+  }, [onlineTournaments, cleanName]);
+
+  const [selectedTourId, setSelectedTourId] = React.useState(defaultTourId);
+  const [newTourName, setNewTourName] = React.useState(cleanName);
+
+  // Sync selectedTourId when defaultTourId changes
+  React.useEffect(() => {
+    if (defaultTourId) setSelectedTourId(defaultTourId);
+  }, [defaultTourId]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 z-[99999]">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl">
+        {/* Header */}
+        <div className="p-6 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white flex justify-between items-center">
+          <div>
+            <h3 className="text-base font-black uppercase tracking-wider">Đăng bản nháp lên Online Cloud 🏆</h3>
+            <p className="text-[10px] text-indigo-100 mt-1">Đồng bộ bảng điểm lịch sử của thầy cô lên hệ thống trực tuyến</p>
+          </div>
+          <button onClick={onClose} className="p-1 hover:bg-white/10 rounded-full transition-all text-white cursor-pointer">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="p-6 space-y-6">
+          <div className="bg-slate-50 dark:bg-slate-950 p-4 rounded-2xl border border-slate-100 dark:border-slate-800">
+            <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 tracking-wider uppercase block mb-1">BẢN NHÁP HIỆN TẠI</span>
+            <div className="text-xs font-black text-slate-800 dark:text-slate-200">{draftPreviewItem.matchName}</div>
+            <div className="flex gap-4 mt-2 text-[10px] text-slate-500 font-mono">
+              <span>👤 {draftPreviewItem.athletes.length} VĐV</span>
+              <span>🎯 {draftPreviewItem.shotCount} Lượt bắn</span>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <label className="block text-xs font-black text-slate-700 dark:text-slate-300 uppercase tracking-wider">Chọn phương thức xuất bản</label>
+            
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                disabled={onlineTournaments.length === 0}
+                onClick={() => setPublishOption("overwrite")}
+                className={`p-3 rounded-2xl border text-left transition-all cursor-pointer ${
+                  publishOption === "overwrite"
+                    ? "border-indigo-600 bg-indigo-50/40 dark:bg-indigo-950/20 text-indigo-600 dark:text-indigo-400"
+                    : "border-slate-200 dark:border-slate-800 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-950"
+                } ${onlineTournaments.length === 0 ? "opacity-50 cursor-not-allowed" : ""}`}
+              >
+                <div className="text-xs font-bold">GHI ĐÈ giải đấu online</div>
+                <div className="text-[9px] mt-1 opacity-80">Thay thế dữ liệu của một giải online sẵn có</div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setPublishOption("new")}
+                className={`p-3 rounded-2xl border text-left transition-all cursor-pointer ${
+                  publishOption === "new"
+                    ? "border-indigo-600 bg-indigo-50/40 dark:bg-indigo-950/20 text-indigo-600 dark:text-indigo-400"
+                    : "border-slate-200 dark:border-slate-800 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-950"
+                }`}
+              >
+                <div className="text-xs font-bold">TẠO GIẢI MỚI hoàn toàn</div>
+                <div className="text-[9px] mt-1 opacity-80">Khởi tạo và tải lên một giải đấu trực tuyến mới</div>
+              </button>
+            </div>
+
+            {publishOption === "overwrite" && onlineTournaments.length > 0 && (
+              <div className="space-y-2 pt-2">
+                <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Danh sách giải online (Được gợi ý giải gần tên nhất)</label>
+                <select
+                  value={selectedTourId}
+                  onChange={(e) => setSelectedTourId(e.target.value)}
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5 text-xs font-medium text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                >
+                  {onlineTournaments.map((tour) => (
+                    <option key={tour.id} value={tour.id}>
+                      {tour.matchName} {tour.id === defaultTourId ? " ⭐️ (Gần đây nhất)" : ""}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[9px] text-rose-500 font-medium">⚠️ Thầy cô lưu ý: Hành động này sẽ thay thế hoàn toàn điểm số của giải đấu được chọn.</p>
+              </div>
+            )}
+
+            {publishOption === "new" && (
+              <div className="space-y-2 pt-2">
+                <label className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Tên giải đấu online mới</label>
+                <input
+                  type="text"
+                  value={newTourName}
+                  onChange={(e) => setNewTourName(e.target.value)}
+                  placeholder="Nhập tên giải đấu..."
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5 text-xs font-medium text-slate-800 dark:text-slate-200 focus:outline-none"
+                />
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="p-6 bg-slate-50 dark:bg-slate-950 border-t border-slate-100 dark:border-slate-800 flex gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex-1 px-4 py-2.5 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-900 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer text-center"
+          >
+            Đóng
+          </button>
+          
+          <button
+            type="button"
+            onClick={() => {
+              if (publishOption === "overwrite") {
+                onOverwrite(selectedTourId);
+              } else {
+                onCreateNew(newTourName);
+              }
+            }}
+            className="flex-1 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer shadow-md text-center"
+          >
+            Đăng online 🚀
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 export default function App() {
   const [isStorageRestoring, setIsStorageRestoring] = useState(true);
@@ -356,7 +506,7 @@ export default function App() {
 
   const [athletes, setAthletes] = useState<Athlete[]>(() => {
     const saved = localStorage.getItem("slingshot_athletes");
-    const parsed = saved ? restoreBase64Avatars(JSON.parse(saved)) : DEFAULT_ATHLETES;
+    const parsed = saved ? restoreBase64Avatars(JSON.parse(saved)) : [];
     const seen = new Set<string>();
     return parsed.filter((a: Athlete) => {
       if (!a || !a.id) return false;
@@ -379,6 +529,7 @@ export default function App() {
   }, [isSpectatorModeOverridden]);
 
   const [networkStatus, setNetworkStatus] = useState<"online" | "offline" | null>(null);
+  const [dbHasPendingWrites, setDbHasPendingWrites] = useState(false);
   const onlineTimerRef = useRef<any>(null);
 
   useEffect(() => {
@@ -436,7 +587,7 @@ export default function App() {
 
   const [teamAthletes, setTeamAthletes] = useState<Athlete[]>(() => {
     const saved = localStorage.getItem("slingshot_team_athletes");
-    const parsed = saved ? restoreBase64Avatars(JSON.parse(saved)) : DEFAULT_ATHLETES;
+    const parsed = saved ? restoreBase64Avatars(JSON.parse(saved)) : [];
     const seen = new Set<string>();
     return parsed.filter((a: Athlete) => {
       if (!a || !a.id) return false;
@@ -460,7 +611,7 @@ export default function App() {
       list = restoreBase64Avatars(JSON.parse(saved));
     } else {
       const savedActive = localStorage.getItem("slingshot_athletes");
-      list = savedActive ? restoreBase64Avatars(JSON.parse(savedActive)) : DEFAULT_ATHLETES;
+      list = savedActive ? restoreBase64Avatars(JSON.parse(savedActive)) : [];
     }
     const seen = new Set<string>();
     return list.filter((a: Athlete) => {
@@ -492,6 +643,16 @@ export default function App() {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [currentTournamentDoc, setCurrentTournamentDoc] = useState<TournamentData | null>(null);
+  const [draftPreviewItem, setDraftPreviewItem] = useState<MatchHistoryItem | null>(null);
+  const [isPublishDraftModalOpen, setIsPublishDraftModalOpen] = useState(false);
+  const [onlineTournaments, setOnlineTournaments] = useState<TournamentData[]>([]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToTournamentsList((list) => {
+      setOnlineTournaments(list);
+    });
+    return () => unsubscribe();
+  }, []);
 
   useEffect(() => {
     const unsub = auth.onAuthStateChanged((user) => {
@@ -635,16 +796,7 @@ export default function App() {
     const { id, targetTab } = switchingTournamentData;
 
     setAthletes([]);
-    try {
-      const savedGlobal = localStorage.getItem("slingshot_master_athletes_global") || localStorage.getItem("slingshot_master_athletes");
-      if (savedGlobal) {
-         setMasterAthletes(restoreBase64Avatars(JSON.parse(savedGlobal)));
-      } else {
-        setMasterAthletes([]);
-      }
-    } catch (e) {
-      setMasterAthletes([]);
-    }
+    setMasterAthletes([]);
     setTeamAthletes([]);
     setInputAthletes([]);
     setTeamInputAthletes([]);
@@ -947,20 +1099,347 @@ export default function App() {
 
   // Derived role properties for active tournament context
   const isOnlineTournament = activeHistoryId?.startsWith("tour-");
-  const isGlobalAdmin = currentUser?.email === "nahnatofficial@gmail.com";
+  const isGlobalAdmin = currentUser?.email === "nahnatofficial@gmail.com" || currentUser?.email === "vscvietnamslingshot@gmail.com";
   const isTournamentOwner = currentUser && currentTournamentDoc && (currentTournamentDoc.creatorId === currentUser.uid || isGlobalAdmin);
   const isTournamentSubAdmin = currentUser && currentTournamentDoc && (currentTournamentDoc.subAdmins?.some((email: string) => email.toLowerCase().trim() === currentUser.email?.toLowerCase().trim()));
   const isTournamentReferee = currentUser && currentTournamentDoc && (currentTournamentDoc.referees?.includes(currentUser.email || ""));
 
+  const isTournamentEndedPast30Days = (endDateStr?: string, startDateStr?: string): boolean => {
+    const targetDateStr = endDateStr || startDateStr;
+    if (!targetDateStr) return false;
+    
+    const parts = targetDateStr.split("-");
+    if (parts.length !== 3) return false;
+    
+    const dateObj = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]), 23, 59, 59, 999);
+    const now = new Date();
+    
+    const thirtyDaysInMs = 30 * 24 * 60 * 60 * 1000;
+    return (now.getTime() - dateObj.getTime()) > thirtyDaysInMs;
+  };
+
+  const hasEndedPast30Days = isOnlineTournament && isTournamentEndedPast30Days(currentTournamentDoc?.endDate, currentTournamentDoc?.startDate);
+
   const userRole = isGlobalAdmin
     ? "admin"
-    : !isOnlineTournament
-      ? "admin" 
-      : (isTournamentOwner || isTournamentSubAdmin) 
-        ? "admin" 
-        : isTournamentReferee 
-          ? "referee" 
-          : "spectator";
+    : hasEndedPast30Days
+      ? "spectator"
+      : !currentUser
+        ? "spectator"
+        : !isOnlineTournament
+          ? "admin" 
+          : (isTournamentOwner || isTournamentSubAdmin) 
+            ? "admin" 
+            : isTournamentReferee 
+              ? "referee" 
+              : "spectator";
+
+  // --- AUTOMATIC DUAL-BACKUP ENGINE ---
+  const stateRefs = {
+    matchName: useRef(matchName),
+    distances: useRef(distances),
+    shotsCount: useRef(shotsCount),
+    athletes: useRef(athletes),
+    teamDistances: useRef(teamDistances),
+    teamShotsCount: useRef(teamShotsCount),
+    teamAthletes: useRef(teamAthletes),
+    inputAthletes: useRef(inputAthletes || []),
+    teamInputAthletes: useRef(teamInputAthletes || []),
+    directMaxPoints: useRef(directMaxPoints),
+    teamDirectMaxPoints: useRef(teamDirectMaxPoints),
+    directMaxShots: useRef(directMaxShots),
+    teamDirectMaxShots: useRef(teamDirectMaxShots),
+    masterAthletes: useRef(masterAthletes),
+    history: useRef(history),
+    userRole: useRef(userRole),
+    activeHistoryId: useRef(activeHistoryId),
+    currentTournamentDoc: useRef(currentTournamentDoc),
+  };
+
+  useEffect(() => { stateRefs.matchName.current = matchName; }, [matchName]);
+  useEffect(() => { stateRefs.distances.current = distances; }, [distances]);
+  useEffect(() => { stateRefs.shotsCount.current = shotsCount; }, [shotsCount]);
+  useEffect(() => { stateRefs.athletes.current = athletes; }, [athletes]);
+  useEffect(() => { stateRefs.teamDistances.current = teamDistances; }, [teamDistances]);
+  useEffect(() => { stateRefs.teamShotsCount.current = teamShotsCount; }, [teamShotsCount]);
+  useEffect(() => { stateRefs.teamAthletes.current = teamAthletes; }, [teamAthletes]);
+  useEffect(() => { stateRefs.inputAthletes.current = inputAthletes || []; }, [inputAthletes]);
+  useEffect(() => { stateRefs.teamInputAthletes.current = teamInputAthletes || []; }, [teamInputAthletes]);
+  useEffect(() => { stateRefs.directMaxPoints.current = directMaxPoints; }, [directMaxPoints]);
+  useEffect(() => { stateRefs.teamDirectMaxPoints.current = teamDirectMaxPoints; }, [teamDirectMaxPoints]);
+  useEffect(() => { stateRefs.directMaxShots.current = directMaxShots; }, [directMaxShots]);
+  useEffect(() => { stateRefs.teamDirectMaxShots.current = teamDirectMaxShots; }, [teamDirectMaxShots]);
+  useEffect(() => { stateRefs.masterAthletes.current = masterAthletes; }, [masterAthletes]);
+  useEffect(() => { stateRefs.history.current = history; }, [history]);
+  useEffect(() => { stateRefs.userRole.current = userRole; }, [userRole]);
+  useEffect(() => { stateRefs.activeHistoryId.current = activeHistoryId; }, [activeHistoryId]);
+  useEffect(() => { stateRefs.currentTournamentDoc.current = currentTournamentDoc; }, [currentTournamentDoc]);
+
+  const performAutoBackup = (isTimeline: boolean) => {
+    // Only perform background auto-backups for active admins/owners and sub-admins
+    if (stateRefs.userRole.current !== "admin" && stateRefs.userRole.current !== "subAdmin") return;
+
+    // Check 15-minute creation gate
+    let creationTimeMs = Date.now();
+    const currentActiveId = stateRefs.activeHistoryId.current;
+    const currentDoc = stateRefs.currentTournamentDoc.current;
+
+    if (currentActiveId) {
+      if (currentActiveId.startsWith("tour-") && currentDoc?.createdAt) {
+        if (typeof currentDoc.createdAt.toDate === "function") {
+          creationTimeMs = currentDoc.createdAt.toDate().getTime();
+        } else if (currentDoc.createdAt.seconds) {
+          creationTimeMs = currentDoc.createdAt.seconds * 1000;
+        } else {
+          const parsed = Date.parse(currentDoc.createdAt);
+          if (!isNaN(parsed)) creationTimeMs = parsed;
+        }
+      } else {
+        const storedCreated = localStorage.getItem(`slingshot_created_at_${currentActiveId}`);
+        if (storedCreated) {
+          creationTimeMs = Number(storedCreated);
+        }
+      }
+    } else {
+      const storedCreated = localStorage.getItem("slingshot_created_at_local");
+      if (storedCreated) {
+        creationTimeMs = Number(storedCreated);
+      } else {
+        const now = Date.now();
+        localStorage.setItem("slingshot_created_at_local", now.toString());
+        creationTimeMs = now;
+      }
+    }
+
+    const minutesElapsed = (Date.now() - creationTimeMs) / (60 * 1000);
+    if (minutesElapsed < 15) {
+      console.log(`[AutoBackup] Skipped: only runs 15 minutes after creation. Elapsed: ${minutesElapsed.toFixed(1)}m`);
+      return;
+    }
+
+    try {
+      const backupData = {
+        matchName: stateRefs.matchName.current,
+        distances: stateRefs.distances.current,
+        shotsCount: stateRefs.shotsCount.current,
+        athletes: stripBase64Avatars(stateRefs.athletes.current),
+        teamDistances: stateRefs.teamDistances.current,
+        teamShotsCount: stateRefs.teamShotsCount.current,
+        teamAthletes: stripBase64Avatars(stateRefs.teamAthletes.current),
+        inputAthletes: stripBase64Avatars(stateRefs.inputAthletes.current),
+        teamInputAthletes: stripBase64Avatars(stateRefs.teamInputAthletes.current),
+        directMaxPoints: stateRefs.directMaxPoints.current,
+        teamDirectMaxPoints: stateRefs.teamDirectMaxPoints.current,
+        directMaxShots: stateRefs.directMaxShots.current,
+        teamDirectMaxShots: stateRefs.teamDirectMaxShots.current,
+        masterAthletes: stripBase64Avatars(stateRefs.masterAthletes.current),
+        history: stripBase64Avatars(stateRefs.history.current),
+        activeHistoryId: currentActiveId,
+        backedUpAt: new Date().toISOString(),
+      };
+
+      const dataStr = JSON.stringify(backupData);
+      const timestamp = Date.now();
+      const currentMatchName = stateRefs.matchName.current || "Giải đấu không tên";
+
+      // Read current local backups index
+      const savedIndex = localStorage.getItem("vsc_device_backups_index");
+      let backupsIndex: { id: string; timestamp: number; matchName: string; isTimeline: boolean }[] = [];
+      if (savedIndex) {
+        try {
+          backupsIndex = JSON.parse(savedIndex);
+        } catch {
+          backupsIndex = [];
+        }
+      }
+
+      if (isTimeline) {
+        // Timeline Backup (Every 15 minutes - max 5 files)
+        const newBackupId = `vsc_backup_timeline_${timestamp}`;
+        localStorage.setItem(newBackupId, dataStr);
+
+        backupsIndex.unshift({
+          id: newBackupId,
+          timestamp,
+          matchName: currentMatchName,
+          isTimeline: true
+        });
+
+        // Retain only latest 5 timeline archives
+        const timelineBackups = backupsIndex.filter(b => b.isTimeline);
+        if (timelineBackups.length > 5) {
+          const toRemove = timelineBackups.slice(5);
+          toRemove.forEach(b => {
+            localStorage.removeItem(b.id);
+          });
+          backupsIndex = backupsIndex.filter(b => !toRemove.some(r => r.id === b.id));
+        }
+      } else {
+        // Latest Backup (Every 5 minutes - overwrite)
+        const latestId = "vsc_backup_latest";
+        localStorage.setItem(latestId, dataStr);
+
+        const latestIdx = backupsIndex.findIndex(b => b.id === latestId);
+        const item = {
+          id: latestId,
+          timestamp,
+          matchName: currentMatchName,
+          isTimeline: false
+        };
+        if (latestIdx !== -1) {
+          backupsIndex[latestIdx] = item;
+        } else {
+          backupsIndex.push(item);
+        }
+      }
+
+      localStorage.setItem("vsc_device_backups_index", JSON.stringify(backupsIndex));
+      window.dispatchEvent(new CustomEvent("vsc_backups_updated"));
+      console.log(`[AutoBackup] Created ${isTimeline ? "Timeline" : "Latest"} local backup successfully.`);
+    } catch (err) {
+      console.warn("[AutoBackup] Failed to run background auto-backup:", err);
+    }
+  };
+
+  const performHistoryAutoBackup = () => {
+    // Only perform background auto-backups for active admins/owners and sub-admins
+    if (stateRefs.userRole.current !== "admin" && stateRefs.userRole.current !== "subAdmin") return;
+
+    // Check 15-minute creation gate
+    let creationTimeMs = Date.now();
+    const currentActiveId = stateRefs.activeHistoryId.current;
+    const currentDoc = stateRefs.currentTournamentDoc.current;
+
+    if (currentActiveId) {
+      if (currentActiveId.startsWith("tour-") && currentDoc?.createdAt) {
+        if (typeof currentDoc.createdAt.toDate === "function") {
+          creationTimeMs = currentDoc.createdAt.toDate().getTime();
+        } else if (currentDoc.createdAt.seconds) {
+          creationTimeMs = currentDoc.createdAt.seconds * 1000;
+        } else {
+          const parsed = Date.parse(currentDoc.createdAt);
+          if (!isNaN(parsed)) creationTimeMs = parsed;
+        }
+      } else {
+        const storedCreated = localStorage.getItem(`slingshot_created_at_${currentActiveId}`);
+        if (storedCreated) {
+          creationTimeMs = Number(storedCreated);
+        }
+      }
+    } else {
+      const storedCreated = localStorage.getItem("slingshot_created_at_local");
+      if (storedCreated) {
+        creationTimeMs = Number(storedCreated);
+      } else {
+        const now = Date.now();
+        localStorage.setItem("slingshot_created_at_local", now.toString());
+        creationTimeMs = now;
+      }
+    }
+
+    const minutesElapsed = (Date.now() - creationTimeMs) / (60 * 1000);
+    if (minutesElapsed < 15) {
+      console.log(`[HistoryAutoBackup] Skipped: only runs 15 minutes after creation. Elapsed: ${minutesElapsed.toFixed(1)}m`);
+      return;
+    }
+
+    try {
+      const pad = (n: number) => n.toString().padStart(2, "0");
+      const formatBackupTime = (date: Date) => {
+        const hh = pad(date.getHours());
+        const mm = pad(date.getMinutes());
+        const DD = pad(date.getDate());
+        const MM = pad(date.getMonth() + 1);
+        const YYYY = date.getFullYear();
+        return `${hh}:${mm} - ${DD}/${MM}/${YYYY}`;
+      };
+
+      const currentMatchName = stateRefs.matchName.current || "Giải đấu không tên";
+      const finalName = `${currentMatchName} (${formatBackupTime(new Date())})`;
+      
+      const restoredAthletes = restoreBase64Avatars(stateRefs.athletes.current);
+
+      const newHistoryItem: MatchHistoryItem = {
+        id: `hist-auto-${Date.now()}`,
+        date: new Date().toISOString(),
+        matchName: finalName,
+        shotCount: stateRefs.shotsCount.current,
+        distances: stateRefs.distances.current,
+        athletes: restoredAthletes,
+        masterCount: restoredAthletes.length,
+        masterAthletes: restoredAthletes,
+        teamDistances: stateRefs.teamDistances.current,
+        teamShotCount: stateRefs.teamShotsCount.current,
+        teamAthletes: restoreBase64Avatars(stateRefs.teamAthletes.current),
+        isAutoBackup: true,
+      };
+
+      setHistory((prev) => [newHistoryItem, ...prev]);
+      console.log(`[HistoryAutoBackup] Created history record archive: ${finalName}`);
+    } catch (err) {
+      console.warn("[HistoryAutoBackup] Failed to run history auto-backup:", err);
+    }
+  };
+
+  // Run the background intervals
+  useEffect(() => {
+    // Overwrite backup runs every 5 minutes
+    const latestTimer = setInterval(() => {
+      performAutoBackup(false);
+    }, 5 * 60 * 1000);
+
+    // Snapshot timeline backup runs every 15 minutes
+    const timelineTimer = setInterval(() => {
+      performAutoBackup(true);
+    }, 15 * 60 * 1000);
+
+    // History auto-backup runs every 20 minutes (new requirement)
+    const historyAutoTimer = setInterval(() => {
+      performHistoryAutoBackup();
+    }, 20 * 60 * 1000);
+
+    return () => {
+      clearInterval(latestTimer);
+      clearInterval(timelineTimer);
+      clearInterval(historyAutoTimer);
+    };
+  }, []);
+
+  // Backups recovery and deletion handlers
+  const handleRestoreDeviceBackup = (backupId: string) => {
+    try {
+      const dataStr = localStorage.getItem(backupId);
+      if (!dataStr) {
+        alert("Không tìm thấy dữ liệu sao lưu!");
+        return false;
+      }
+      const success = handleImportFullBackup(dataStr);
+      if (success) {
+        alert("✓ Đã khôi phục thành công toàn bộ dữ liệu từ Bản sao lưu nội bộ!");
+      }
+      return success;
+    } catch (err) {
+      alert("Lỗi khi khôi phục bản sao lưu: " + String(err));
+      return false;
+    }
+  };
+
+  const handleDeleteDeviceBackup = (backupId: string) => {
+    try {
+      localStorage.removeItem(backupId);
+      const savedIndex = localStorage.getItem("vsc_device_backups_index");
+      if (savedIndex) {
+        const backupsIndex = JSON.parse(savedIndex);
+        const filtered = backupsIndex.filter((b: any) => b.id !== backupId);
+        localStorage.setItem("vsc_device_backups_index", JSON.stringify(filtered));
+      }
+      window.dispatchEvent(new CustomEvent("vsc_backups_updated"));
+      return true;
+    } catch (err) {
+      console.error("Failed to delete device backup:", err);
+      return false;
+    }
+  };
 
   // Subscribe to real-time online document shifts
   useEffect(() => {
@@ -968,21 +1447,12 @@ export default function App() {
     setCurrentTournamentDoc(null);
     setIsSpectatorModeOverridden(false);
 
-    // Provide the global master list of athletes as a placeholder while loading
-    try {
-      const savedGlobal = localStorage.getItem("slingshot_master_athletes_global") || localStorage.getItem("slingshot_master_athletes");
-      if (savedGlobal) {
-        setMasterAthletes(restoreBase64Avatars(JSON.parse(savedGlobal)));
-      }
-    } catch (e) {
-      console.warn("Could not load global athletes placeholder:", e);
-    }
-
     if (!activeHistoryId || !activeHistoryId.startsWith("tour-")) {
       return;
     }
 
-    const unsubscribe = subscribeToTournamentDoc(activeHistoryId, (docVal) => {
+    const unsubscribe = subscribeToTournamentDoc(activeHistoryId, (docVal, pending) => {
+      setDbHasPendingWrites(pending);
       if (docVal) {
         setCurrentTournamentDoc(docVal);
         // Direct propagation of server states to current active variables
@@ -1001,11 +1471,11 @@ export default function App() {
         if (docVal.teamShotsCount) setTeamShotsCount(docVal.teamShotsCount);
         if (docVal.distances) setDistances(docVal.distances);
         if (docVal.teamDistances) setTeamDistances(docVal.teamDistances);
-        if (docVal.athletes) setAthletes(docVal.athletes);
-        if (docVal.teamAthletes) setTeamAthletes(docVal.teamAthletes);
-        if (docVal.inputAthletes) setInputAthletes(docVal.inputAthletes);
-        if (docVal.teamInputAthletes) setTeamInputAthletes(docVal.teamInputAthletes);
-        if (docVal.masterAthletes) setMasterAthletes(docVal.masterAthletes);
+        setAthletes(docVal.athletes || []);
+        setTeamAthletes(docVal.teamAthletes || []);
+        setInputAthletes(docVal.inputAthletes || []);
+        setTeamInputAthletes(docVal.teamInputAthletes || []);
+        setMasterAthletes(docVal.masterAthletes || docVal.athletes || []);
         if (docVal.directMaxPoints !== undefined) setDirectMaxPoints(docVal.directMaxPoints !== null ? docVal.directMaxPoints : undefined);
         if (docVal.teamDirectMaxPoints !== undefined) setTeamDirectMaxPoints(docVal.teamDirectMaxPoints !== null ? docVal.teamDirectMaxPoints : undefined);
         if (docVal.directMaxShots !== undefined) setDirectMaxShots(docVal.directMaxShots !== null ? docVal.directMaxShots : 10);
@@ -2084,6 +2554,23 @@ export default function App() {
 
   // Exit current tournament and reset all tournament state variables back to defaults
   const handleExitTournament = () => {
+    // Auto-save roster to stored athlete lists on exit for admin/creator/sub-admin
+    const rosterToSave = (masterAthletes && masterAthletes.length > 0) ? masterAthletes : athletes;
+    if (userRole === "admin" && matchName && matchName.trim() && rosterToSave && rosterToSave.length > 0) {
+      const nameToUse = matchName.trim();
+      setStoredAthleteLists((prev) => {
+        const existingItem = prev?.find((item) => item.name.toLowerCase() === nameToUse.toLowerCase());
+        const filtered = (prev || []).filter((item) => item.name.toLowerCase() !== nameToUse.toLowerCase());
+        const updatedRecord = {
+          id: existingItem?.id || `list-${Date.now()}`,
+          name: nameToUse,
+          createdAt: existingItem?.createdAt || new Date().toISOString(),
+          athletes: JSON.parse(JSON.stringify(rosterToSave)),
+        };
+        return [updatedRecord, ...filtered];
+      });
+    }
+
     setActiveHistoryId(null);
     setAthletes([]);
     try {
@@ -2123,10 +2610,11 @@ export default function App() {
     const target = history.find((h) => h.id === itemId);
     if (!target) return;
 
-    // Set activeHistoryId first to avoid creating next entries
-    setActiveHistoryId(target.id);
+    // Put into draft preview mode (activeHistoryId is null to show Offline preview draft)
+    setActiveHistoryId(null);
+    setDraftPreviewItem(target);
 
-    // Now restore target match
+    // Now restore target match fields locally
     setMatchName(target.matchName);
     setStartDate(target.startDate || "");
     setEndDate(target.endDate || "");
@@ -2144,7 +2632,12 @@ export default function App() {
       : target.athletes;
     setMasterAthletes(JSON.parse(JSON.stringify(restoredMasters)));
 
+    // Clear active temporary inputs
+    setInputAthletes([]);
+    setTeamInputAthletes([]);
+
     setActiveTab("scoring"); // redirect back to scorecards
+    alert(`Đã mở chế độ xem trước BẢN NHÁP ngoại tuyến cho giải: "${target.matchName}". Thầy cô có thể kiểm tra danh sách thi đấu và bảng điểm, sau đó bấm "Xác nhận Đăng Online" ở thanh cảnh báo trên cùng để đồng bộ đám mây.`);
   };
 
   // Remove history snapshot
@@ -2156,6 +2649,100 @@ export default function App() {
       setStoredAthleteLists((prev) => prev.filter((list) => list.name.toLowerCase() !== matchName.toLowerCase()));
     }
     setHistory((prev) => prev.filter((h) => h.id !== itemId));
+  };
+
+  const handleOverwriteOnlinePublish = async (selectedOnlineTourId: string) => {
+    if (!draftPreviewItem) return;
+    if (!selectedOnlineTourId) {
+      alert("Vui lòng chọn giải đấu online cần ghi đè!");
+      return;
+    }
+    const targetTour = onlineTournaments.find(t => t.id === selectedOnlineTourId);
+    if (!targetTour) return;
+
+    const confirmText = `⚠️ Bạn có chắc chắn muốn GHI ĐÈ toàn bộ điểm số, danh sách VĐV, và cấu hình của giải online "${targetTour.matchName}" bằng dữ liệu bản nháp này không?\n\nToàn bộ dữ liệu cũ của giải online này sẽ bị thay thế vĩnh viễn!`;
+    if (!window.confirm(confirmText)) {
+      return;
+    }
+
+    try {
+      await updateOnlineTournament(selectedOnlineTourId, {
+        matchName: targetTour.matchName,
+        distances: draftPreviewItem.distances,
+        shotsCount: draftPreviewItem.shotCount,
+        athletes: draftPreviewItem.athletes,
+        teamDistances: draftPreviewItem.teamDistances || [],
+        teamShotsCount: draftPreviewItem.teamShotCount || DEFAULT_SHOTS_COUNT,
+        teamAthletes: draftPreviewItem.teamAthletes || [],
+        masterAthletes: draftPreviewItem.masterAthletes || draftPreviewItem.athletes || [],
+        inputAthletes: draftPreviewItem.inputAthletes || [],
+        teamInputAthletes: draftPreviewItem.teamInputAthletes || [],
+        directMaxPoints: draftPreviewItem.directMaxPoints,
+        teamDirectMaxPoints: draftPreviewItem.teamDirectMaxPoints,
+        directMaxShots: draftPreviewItem.directMaxShots || 10,
+        teamDirectMaxShots: draftPreviewItem.teamDirectMaxShots || 10,
+      });
+
+      // Update local active state to this overwritten tournament
+      setActiveHistoryId(selectedOnlineTourId);
+      localStorage.setItem("slingshot_active_history_id", selectedOnlineTourId);
+      setDraftPreviewItem(null);
+      setIsPublishDraftModalOpen(false);
+      setActiveTab("dashboard");
+
+      alert(`Đã ghi đè thành công dữ liệu bản nháp lên giải online "${targetTour.matchName}"!`);
+    } catch (err: any) {
+      alert(`Lỗi ghi đè online: ${err.message || err}`);
+    }
+  };
+
+  const handleCreateNewOnlinePublish = async (newOnlineTourName: string) => {
+    if (!draftPreviewItem) return;
+    if (!newOnlineTourName.trim()) {
+      alert("Vui lòng nhập tên giải đấu mới!");
+      return;
+    }
+
+    try {
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
+        alert("Bạn cần đăng nhập để khởi tạo giải đấu online!");
+        return;
+      }
+
+      const creatorEmail = currentUser.email || "";
+      const newTourId = await createOnlineTournament(
+        newOnlineTourName.trim(),
+        currentUser.uid,
+        creatorEmail,
+        {
+          competitionMode: draftPreviewItem.teamAthletes && draftPreviewItem.teamAthletes.length > 0 ? "team" : "individual",
+          shotsCount: draftPreviewItem.shotCount,
+          teamShotsCount: draftPreviewItem.teamShotCount || DEFAULT_SHOTS_COUNT,
+          distances: draftPreviewItem.distances,
+          teamDistances: draftPreviewItem.teamDistances || [],
+          athletes: draftPreviewItem.athletes,
+          teamAthletes: draftPreviewItem.teamAthletes || [],
+          inputAthletes: draftPreviewItem.inputAthletes || [],
+          teamInputAthletes: draftPreviewItem.teamInputAthletes || [],
+          masterAthletes: draftPreviewItem.masterAthletes || draftPreviewItem.athletes || [],
+        }
+      );
+
+      // Track creation time local backup gate
+      localStorage.setItem(`slingshot_created_at_${newTourId}`, Date.now().toString());
+
+      // Update active tournament id
+      setActiveHistoryId(newTourId);
+      localStorage.setItem("slingshot_active_history_id", newTourId);
+      setDraftPreviewItem(null);
+      setIsPublishDraftModalOpen(false);
+      setActiveTab("dashboard");
+
+      alert(`Đã tạo mới và đăng giải online "${newOnlineTourName.trim()}" thành công!`);
+    } catch (err: any) {
+      alert(`Lỗi tạo giải mới online: ${err.message || err}`);
+    }
   };
 
   // Clear all scores inside boxes back to unchecked, preserving the players list
@@ -2494,6 +3081,34 @@ export default function App() {
         </div>
       )}
 
+      {/* Draft Preview Warning & Publish Banner */}
+      {draftPreviewItem && (
+        <div className={`fixed ${networkStatus === "offline" ? "top-[36px]" : "top-0"} left-0 right-0 bg-gradient-to-r from-amber-500 via-amber-600 to-yellow-500 text-white text-[11px] sm:text-xs font-black py-2.5 px-4 text-center z-[9999] flex flex-col sm:flex-row items-center justify-center gap-2 sm:gap-4 shadow-xl border-b border-amber-400/20`}>
+          <div className="flex items-center gap-1.5">
+            <span className="text-sm shrink-0 animate-pulse">⚡</span>
+            <span className="tracking-wide">BẢN NHÁP: Thầy cô đang xem trước lịch sử thi đấu ngoại tuyến.</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsPublishDraftModalOpen(true)}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3.5 py-1 rounded-lg text-[11px] shadow-sm flex items-center gap-1 cursor-pointer transition-all active:scale-95 shrink-0"
+            >
+              <CloudUpload size={13} />
+              XÁC NHẬN ĐĂNG ONLINE
+            </button>
+            <button
+              onClick={() => {
+                setDraftPreviewItem(null);
+                handleExitTournament();
+              }}
+              className="bg-slate-900 hover:bg-slate-800 text-slate-200 font-medium px-3 py-1 rounded-lg text-[11px] cursor-pointer transition-all active:scale-95 shrink-0"
+            >
+              Thoát bản nháp
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Top Main Banner Header */}
       <header className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white shadow-lg border-b border-indigo-950" id="app-header">
         <div className="max-w-7xl mx-auto px-4 py-5 sm:py-6 flex flex-col md:flex-row justify-between items-center gap-4">
@@ -2502,13 +3117,39 @@ export default function App() {
               <VSCLogo size={60} />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-[10px] uppercase font-serif font-black tracking-widest bg-amber-500 text-slate-950 px-2.5 py-0.5 rounded-full shadow-sm">
                   VSC OFFICIAL
                 </span>
                 <span className="text-[10px] uppercase font-mono tracking-widest text-indigo-300 font-black">
                   App v2.5 Premium
                 </span>
+                {activeHistoryId && activeHistoryId.startsWith("tour-") && (
+                  <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest ${
+                    networkStatus === "offline"
+                      ? "bg-rose-500/15 text-rose-300 border border-rose-500/25"
+                      : dbHasPendingWrites
+                      ? "bg-amber-500/15 text-amber-300 border border-amber-500/25 animate-pulse"
+                      : "bg-emerald-500/15 text-emerald-300 border border-emerald-500/25"
+                  }`}>
+                    {networkStatus === "offline" ? (
+                      <>
+                        <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping shrink-0" />
+                        Ngoại tuyến (Lưu Cache)
+                      </>
+                    ) : dbHasPendingWrites ? (
+                      <>
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-spin shrink-0" />
+                        Đang đồng bộ Cloud...
+                      </>
+                    ) : (
+                      <>
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                        Đồng bộ Cloud OK
+                      </>
+                    )}
+                  </span>
+                )}
               </div>
               <h1 className="text-xl sm:text-2xl font-black mt-1 tracking-tight text-white font-sans uppercase leading-none">
                 Vietnam Slingshot Championship
@@ -3897,10 +4538,13 @@ export default function App() {
               setStoredAthleteLists={setStoredAthleteLists}
               activeHistoryId={activeHistoryId}
               setActiveHistoryId={setActiveHistoryId}
+              setInputAthletes={setInputAthletes}
+              setTeamInputAthletes={setTeamInputAthletes}
               startDate={startDate}
               setStartDate={setStartDate}
               endDate={endDate}
               setEndDate={setEndDate}
+              setClubs={setClubs}
               
               // Team modes
               teamDistances={teamDistances}
@@ -3945,6 +4589,13 @@ export default function App() {
               currentMasterCount={masterAthletes.length}
               onExportBackup={handleExportBackup}
               onImportBackup={handleImportFullBackup}
+              userRole={userRole}
+              onRestoreDeviceBackup={handleRestoreDeviceBackup}
+              onDeleteDeviceBackup={handleDeleteDeviceBackup}
+              matchName={matchName}
+              onSaveCurrentSessionToHistory={handleSaveCurrentSessionToHistory}
+              startDate={startDate}
+              endDate={endDate}
             />
           )}
 
@@ -4265,6 +4916,17 @@ export default function App() {
       )}
 
       <AuthModal isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} />
+
+      {draftPreviewItem && (
+        <PublishDraftModal
+          isOpen={isPublishDraftModalOpen}
+          onClose={() => setIsPublishDraftModalOpen(false)}
+          draftPreviewItem={draftPreviewItem}
+          onlineTournaments={onlineTournaments}
+          onOverwrite={handleOverwriteOnlinePublish}
+          onCreateNew={handleCreateNewOnlinePublish}
+        />
+      )}
 
     </div>
   );

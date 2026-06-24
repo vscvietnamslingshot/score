@@ -158,7 +158,7 @@ export const AthleteManagement: React.FC<AthleteManagementProps> = ({
           // If Firestore resides empty but we have local storage data in the browser,
           // instantly populate the Firestore database so the user does not lose their custom roster list.
           const savedLocal = localStorage.getItem("slingshot_vsc_system_athletes");
-          const isGlobalAdmin = currentUser?.email === "nahnatofficial@gmail.com";
+          const isGlobalAdmin = currentUser?.email === "nahnatofficial@gmail.com" || currentUser?.email === "vscvietnamslingshot@gmail.com";
           if (savedLocal && isGlobalAdmin) {
             try {
               const parsed = JSON.parse(savedLocal);
@@ -196,37 +196,7 @@ export const AthleteManagement: React.FC<AthleteManagementProps> = ({
     }
   };
 
-  // Auto-save/overwrite tournament roster inside storedAthleteLists matching the matchName
-  useEffect(() => {
-    if (!matchName || !matchName.trim() || !athletes || athletes.length === 0) {
-      return;
-    }
-
-    const nameToUse = matchName.trim();
-
-    setStoredAthleteLists((prev) => {
-      const existingItem = prev?.find((item) => item.name.toLowerCase() === nameToUse.toLowerCase());
-
-      // Compare structure to prevent any redundant update cycles or loops
-      if (existingItem) {
-        const isIdentical = JSON.stringify(existingItem.athletes) === JSON.stringify(athletes);
-        if (isIdentical) {
-          return prev;
-        }
-      }
-
-      const filtered = (prev || []).filter((item) => item.name.toLowerCase() !== nameToUse.toLowerCase());
-
-      const updatedRecord: StoredAthleteList = {
-        id: existingItem?.id || `list-${Date.now()}`,
-        name: nameToUse,
-        createdAt: existingItem?.createdAt || new Date().toISOString(),
-        athletes: JSON.parse(JSON.stringify(athletes)),
-      };
-
-      return [updatedRecord, ...filtered];
-    });
-  }, [athletes, matchName, setStoredAthleteLists]);
+  // Roster auto-save and synchronization is handled globally in the main App.tsx auto-save loop to ensure state consistency and prevent race conditions.
 
   const isVscTab = leftTab === "vsc_system";
   const currentRoster = isVscTab ? vscSystemAthletes : athletes;
